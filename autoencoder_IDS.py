@@ -3,6 +3,15 @@ import numpy as np
 import re
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder, OneHotEncoder
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    precision_recall_curve,
+    auc,
+)
 from collections import defaultdict
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -214,7 +223,7 @@ if __name__ == "__main__":
 
     # 設定閾值: 通常取正常數據重構誤差的 Q95 或 Q99
     # 這裡我們取 95th percentile
-    threshold = np.quantile(val_errors, 0.99)
+    threshold = np.quantile(val_errors, 0.995)
     print(f"\n設定異常重構誤差閾值 (95th percentile of Normal Data): {threshold:.4f}")
 
     # --- 5. 異常檢測 ---
@@ -233,20 +242,58 @@ if __name__ == "__main__":
     print(f"總行數: {len(df)}")
     print(f"檢測到的異常數: {len(anomalies_detected)}")
 
-    # 輸出前 10 筆檢測到的異常，並比較實際標籤
-    print("\n前 10 筆檢測到的異常 (Pred vs. Actual):")
-    for idx, row in anomalies_detected.head(10).iterrows():
+    # 輸出前 20 筆檢測到的異常，並比較實際標籤
+    print("\n前 20 筆檢測到的異常 (Pred vs. Actual):")
+    for idx, row in anomalies_detected.head(20).iterrows():
         print(
             f"Line {idx+1} | IP: {row['ip']} | Request: {row['request'][:50]}... | Error: {errors[idx]:.4f} | Actual Label: {row['label']}"
         )
 
-    # 簡單準確度評估
-    true_positives = len(anomalies_detected[anomalies_detected["is_anomaly"] == 1])
-    false_positives = len(anomalies_detected[anomalies_detected["is_anomaly"] == 0])
+    # 獲取真實標籤 (y_true) 和模型預測標籤 (y_pred)
+    y_true = df["is_anomaly"].values
+    y_pred = df["pred_anomaly"].values
+
+    # 獲取模型輸出的重構誤差 (作為異常分數，越大越異常)
+    anomaly_scores = errors
+
+    print("\n" + "=" * 50)
+    print("           [模型性能評估報告]")
+    print("=" * 50)
+
+    # 1. 計算基本分類指標 (基於設定的閾值)
+
+    # Accuracy (準確度)
+    acc = accuracy_score(y_true, y_pred)
+    print(f"1. Accuracy (ACC): {acc:.4f} (整體準確率)")
+
+    # Precision (精確度) - 預測為異常的中有多少是真的異常
+    precision = precision_score(y_true, y_pred, zero_division=0)
+    print(f"2. Precision: {precision:.4f} (誤報率的倒數)")
+
+    # Recall (召回率/查全率) - 實際為異常的中有多少被抓到
+    recall = recall_score(y_true, y_pred, zero_division=0)
+    print(f"3. Recall: {recall:.4f} (漏報率的倒數)")
+
+    # F1-Score - Precision 和 Recall 的調和平均數
+    f1 = f1_score(y_true, y_pred, zero_division=0)
+    print(f"4. F1-Score: {f1:.4f} (綜合指標)")
 
     print("-" * 50)
-    print(f"真正例 (TP, 成功抓到): {true_positives}")
-    print(f"假正例 (FP, 誤報): {false_positives}")
-    print(
-        f"模型精確度 (Precision): {true_positives / (true_positives + false_positives + 1e-6):.4f}"
-    )
+
+    # 2. 計算曲線下面積指標 (基於連續分數)
+
+    # ROC AUC (Receiver Operating Characteristic - Area Under Curve)
+    # 衡量模型區分正負類的能力 (與閾值無關)
+    try:
+        roc_auc = roc_auc_score(y_true, anomaly_scores)
+        print(f"5. ROC-AUC: {roc_auc:.4f} (越高越好, 衡量 TPR vs FPR)")
+    except ValueError:
+        print("5. ROC-AUC: 無法計算 (數據中只有單一類別或異常數量過少)")
+
+    # PR-AUC (Precision-Recall - Area Under Curve)
+    # 專門用於不平衡數據集，衡量 Precision vs Recall
+    precision_points, recall_points, _ = precision_recall_curve(y_true, anomaly_scores)
+    pr_auc = auc(recall_points, precision_points)
+    print(f"6. PR-AUC: {pr_auc:.4f} (越高越好, 專注於正類預測)")
+
+    print("=" * 50)
