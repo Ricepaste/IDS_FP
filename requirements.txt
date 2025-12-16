@@ -2,3 +2,5 @@ faker
 tqdm
 pandas 
 scikit-learn
+matplotlib 
+seaborn
